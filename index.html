@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>發票小幫手 (盈裕會計師)</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- 字型設定 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@400;600;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        .font-print { font-family: 'Noto Serif TC', serif; }
+        
+        /* 強制黑色格線 (發票本體用) */
+        .border-black { border-color: #000000 !important; }
+        
+        /* 輸入框樣式 */
+        input:focus { outline: none; }
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        
+        @media print {
+            .no-print { display: none !important; }
+            body { background-color: white; }
+            .shadow-2xl { box-shadow: none; }
+            .bg-blue-50 { background-color: white; }
+            /* 強制列印背景圖形 */
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+    </style>
+</head>
+<body class="bg-blue-50 min-h-screen flex items-center justify-center py-10 px-4">
+
+    <div id="app" class="w-full max-w-[1000px] space-y-8">
+        
+        <!-- 上半部：設定面板 -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border border-blue-100 no-print">
+            <h1 class="text-2xl font-bold text-gray-800 mb-6 flex items-center">
+                <span class="bg-blue-600 text-white w-12 h-8 flex items-center justify-center rounded-lg mr-3 text-lg">盈裕</span>
+                發票小幫手_盈裕聯合會計師事務所
+            </h1>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- 左側：統編查詢 -->
+                <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                    <label class="block text-sm font-bold text-gray-700 mb-2">買方統一編號</label>
+                    <div class="flex gap-2">
+                        <input type="text" v-model="buyerId" placeholder="輸入 8 碼統編" maxlength="8"
+                            @keyup.enter="queryCompany"
+                            class="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition font-mono tracking-widest text-lg">
+                        <button @click="queryCompany" :disabled="isLoading"
+                            class="bg-gray-800 text-white px-6 rounded-lg hover:bg-gray-700 transition disabled:bg-gray-400 font-medium whitespace-nowrap">
+                            {{ isLoading ? '查詢中...' : '查詢' }}
+                        </button>
+                    </div>
+                    <div class="relative mt-2">
+                         <input type="text" v-model="buyerName" placeholder="公司名稱會自動帶入..." 
+                            class="w-full p-3 bg-transparent border-b-2 border-dashed border-gray-300 text-gray-800 font-bold outline-none placeholder-gray-400 focus:border-blue-400 transition">
+                         <span v-if="buyerName" class="absolute right-2 top-3 text-green-600">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                         </span>
+                    </div>
+                    <p class="text-xs text-red-500 mt-2 font-bold" v-if="errorMsg">{{ errorMsg }}</p>
+                    
+                    <!-- API 狀態指示燈 (除錯用) -->
+                    <div class="mt-2 flex items-center gap-2 text-[10px] text-gray-400">
+                        <span class="w-2 h-2 rounded-full" :class="backendStatus ? 'bg-green-500' : 'bg-red-400'"></span>
+                        Backend: {{ backendStatus ? 'Connected' : 'Disconnected (請確認 main.py 是否執行)' }}
+                    </div>
+                </div>
+
+                <!-- 右側：金額計算 (雙向綁定) -->
+                <div class="space-y-4">
+                    <!-- 未稅金額 -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">未稅金額 (Sales Amount)</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-3 text-gray-400">$</span>
+                            <input type="number" v-model.number="salesAmt" @input="calcFromSales"
+                                class="w-full pl-8 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-lg font-bold text-gray-700 font-mono">
+                        </div>
+                    </div>
+
+                    <!-- 含稅總額 -->
+                    <div>
+                        <label class="block text-sm font-bold text-blue-800 mb-1">含稅總額 (Total)</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-3 text-blue-500">$</span>
+                            <input type="number" v-model.number="totalAmt" @input="calcFromTotal"
+                                class="w-full pl-8 p-3 border-2 border-blue-200 bg-blue-50 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-xl font-bold text-blue-900 font-mono">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 下半部：發票本體 (維持真實風格) -->
+        <div class="relative bg-white mx-auto shadow-2xl p-8 md:p-12 print:shadow-none print:p-0 w-full">
+            
+            <!-- 切換按鈕 (不列印) -->
+            <div class="absolute right-8 top-8 md:right-12 md:top-8 flex bg-gray-100 rounded-lg p-1.5 no-print z-20 print:hidden">
+                <button @click="invoiceType = 'triple'" 
+                    :class="['px-6 py-2 rounded-md text-lg font-bold transition duration-200', invoiceType === 'triple' ? 'bg-white shadow-sm text-blue-800 ring-1 ring-black/5' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200/50']">
+                    三聯式
+                </button>
+                <button @click="invoiceType = 'duplicate'" 
+                    :class="['px-6 py-2 rounded-md text-lg font-bold transition duration-200', invoiceType === 'duplicate' ? 'bg-white shadow-sm text-blue-800 ring-1 ring-black/5' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200/50']">
+                    二聯式
+                </button>
+            </div>
+
+            <!-- 1. 標題與字軌 -->
+            <div class="text-center mb-2 relative h-20 select-none">
+                <div class="absolute left-0 top-2 text-2xl font-print font-bold tracking-widest text-gray-800 opacity-70">TW</div>
+                <div class="absolute left-16 top-3 text-xl font-mono tracking-widest text-gray-800 opacity-70">73539250</div>
+                
+                <h1 class="text-4xl font-print font-bold tracking-[0.3em] pt-2 text-center ml-12">{{ invoiceTitle }}</h1>
+                <div class="text-xl font-print tracking-widest border-b-2 border-black inline-block px-8 mt-1">
+                    {{ year }} 年 {{ month }} 月份
+                </div>
+            </div>
+
+            <!-- 2. 買受人資訊 -->
+            <div class="mb-2 px-1 font-print text-lg leading-relaxed">
+                
+                <!-- 【二聯式專用】日期置於買受人上方 -->
+                <div v-if="invoiceType === 'duplicate'" class="flex justify-center items-end text-base mb-2">
+                    <span class="mr-2">中華民國</span>
+                    <span class="text-center w-12 border-b border-black">{{ year }}</span>
+                    <span class="mr-1">年</span>
+                    <span class="text-center w-8 border-b border-black">{{ currentMonth }}</span>
+                    <span class="mr-1">月</span>
+                    <span class="text-center w-8 border-b border-black">{{ day }}</span>
+                    <span>日</span>
+                </div>
+
+                <!-- 買受人欄位 (通用) -->
+                <div class="flex items-center">
+                    <span class="w-24 text-justify font-bold" style="text-align-last: justify;">買受人</span>：
+                    <span class="flex-1 pl-2 text-xl h-8 flex items-center font-bold whitespace-nowrap overflow-hidden text-ellipsis">{{ buyerName }}</span>
+                    <span v-if="invoiceType === 'duplicate'" class="bg-yellow-300 text-black text-xs font-bold px-2 py-0.5 rounded ml-2 whitespace-nowrap shadow-sm border border-yellow-400 transform -rotate-2">(可省略)</span>
+                </div>
+
+                <!-- 模式 A：三聯式 (Triple) -->
+                <template v-if="invoiceType === 'triple'">
+                    <!-- 第二行：統一編號 (左) + 日期 (右) -->
+                    <div class="flex items-center mt-1">
+                        <!-- 統編區塊 -->
+                        <span class="w-24 text-justify font-bold" style="text-align-last: justify;">統一編號</span>：
+                        <div class="flex pl-2 items-end">
+                            <div v-for="(char, i) in formattedBuyerId" :key="i" 
+                                 class="w-6 h-8 border border-black flex items-center justify-center text-lg font-mono -ml-[1px] first:ml-0 relative z-10 bg-transparent">
+                                {{ char }}
+                            </div>
+                        </div>
+                        <div class="flex-1 flex justify-start items-end text-base pl-4">
+                            <span class="mr-2">中華民國</span>
+                            <span class="text-center w-12 border-b border-black">{{ year }}</span>
+                            <span class="mr-1">年</span>
+                            <span class="text-center w-8 border-b border-black">{{ currentMonth }}</span>
+                            <span class="mr-1">月</span>
+                            <span class="text-center w-8 border-b border-black">{{ day }}</span>
+                            <span>日</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 第三行：地址 (獨立一行) -->
+                    <div class="flex items-end mt-1 h-8">
+                        <span class="w-24 text-justify font-bold mb-1" style="text-align-last: justify;">地址</span>：
+                        <div class="flex-1 flex items-end pl-1 text-[10px] md:text-xs font-bold whitespace-nowrap overflow-hidden">
+                            <div class="flex-[1.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">縣市</span>
+                            <div class="flex-[1.5] border-b border-black h-full"></div><span class="px-1 mb-0.5 transform scale-90 md:scale-100">鄉鎮<br class="md:hidden">市區</span>
+                            <div class="flex-[2] border-b border-black h-full"></div><span class="px-1 mb-0.5">路街</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">段</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">巷</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">弄</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">號</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">樓</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">室</span>
+                        </div>
+                        <span class="hidden md:flex items-center bg-yellow-300 text-black font-bold text-xs px-2 py-0.5 rounded ml-2 mb-1 whitespace-nowrap shadow-sm border border-yellow-400 transform -rotate-1">(可省略)</span>
+                    </div>
+                </template>
+
+                <!-- 模式 B：二聯式 (Duplicate) -->
+                <template v-else>
+                    <!-- 第二行：地址 (因為日期已在最上方，地址獨佔一行) -->
+                    <div class="flex items-end mt-1 h-8">
+                        <span class="w-24 text-justify font-bold mb-1" style="text-align-last: justify;">地址</span>：
+                        <div class="flex-1 flex items-end pl-1 text-[10px] md:text-xs font-bold whitespace-nowrap overflow-hidden">
+                            <div class="flex-[1.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">縣市</span>
+                            <div class="flex-[1.5] border-b border-black h-full"></div><span class="px-1 mb-0.5 transform scale-90 md:scale-100">鄉鎮<br class="md:hidden">市區</span>
+                            <div class="flex-[2] border-b border-black h-full"></div><span class="px-1 mb-0.5">路街</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">段</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">巷</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">弄</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">號</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">樓</span>
+                            <div class="flex-[0.5] border-b border-black h-full"></div><span class="px-1 mb-0.5">室</span>
+                        </div>
+                        <span class="hidden md:flex items-center bg-yellow-300 text-black font-bold text-xs px-2 py-0.5 rounded ml-2 mb-1 whitespace-nowrap shadow-sm border border-yellow-400 transform -rotate-1">(可省略)</span>
+                    </div>
+                </template>
+            </div>
+
+            <!-- 3. 表格區域 -->
+            <div class="border-2 border-black mt-2 flex font-print">
+                
+                <!-- 左欄：明細 + 合計 (75%) -->
+                <div class="flex-[3] flex flex-col border-r border-black">
+                    
+                    <!-- 表頭 -->
+                    <div class="h-10 border-b border-black flex text-center text-lg font-bold items-center bg-transparent">
+                        <div class="w-[46%] border-r border-black h-full flex items-center justify-center">品 名</div>
+                        <div class="w-[12%] border-r border-black h-full flex items-center justify-center">數 量</div>
+                        <div class="w-[18%] border-r border-black h-full flex items-center justify-center">單 價</div>
+                        <div class="w-[24%] h-full flex items-center justify-center">金 額</div>
+                    </div>
+
+                    <!-- 明細列表 -->
+                    <div class="relative h-[220px]">
+                        <div class="absolute inset-0 flex pointer-events-none z-0">
+                            <div class="w-[46%] border-r border-black h-full"></div>
+                            <div class="w-[12%] border-r border-black h-full"></div>
+                            <div class="w-[18%] border-r border-black h-full"></div>
+                            <div class="w-[24%] h-full"></div>
+                        </div>
+                        <div class="absolute inset-0 flex flex-col pointer-events-none z-0">
+                            <div v-for="n in 5" :key="n" class="flex-1 border-b border-black opacity-50"></div>
+                        </div>
+                        <div class="relative z-10 flex text-xl h-[44px] items-center font-mono pt-1 font-bold">
+                            <div class="w-[46%] pl-3 truncate">專案開發服務費用</div>
+                            <div class="w-[12%] text-center">1</div>
+                            <div class="w-[18%] text-right pr-2">
+                                {{ formatNumber(invoiceType === 'duplicate' ? totalAmt : salesAmt) }}
+                            </div>
+                            <div class="w-[24%] text-right pr-2">
+                                {{ formatNumber(invoiceType === 'duplicate' ? totalAmt : salesAmt) }}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 合計區 -->
+                    <!-- 1. 銷售額合計 (僅三聯式顯示) -->
+                    <div v-if="invoiceType === 'triple'" class="h-10 border-b border-black flex items-center">
+                        <div class="w-[76%] border-r border-black h-full flex items-center justify-center tracking-[1.5em] pl-[1.5em]">銷售額合計</div>
+                        <div class="w-[24%] h-full flex items-center justify-end pr-2 font-mono text-xl font-bold">{{ formatNumber(salesAmt) }}</div>
+                    </div>
+
+                    <!-- 2. 營業稅 (僅三聯式顯示) -->
+                    <div v-if="invoiceType === 'triple'" class="h-10 border-b border-black flex items-center">
+                        <div class="w-[46%] border-r border-black h-full flex items-center justify-center tracking-[1.5em] pl-[1.5em]">營業稅</div>
+                        <div class="w-[30%] border-r border-black h-full flex items-center justify-center text-sm">
+                            <div class="border border-black w-4 h-4 flex items-center justify-center mr-1 text-xs font-bold cursor-pointer hover:bg-gray-200">✓</div>應稅
+                            <div class="border border-black w-4 h-4 ml-3 mr-1"></div>零稅率
+                            <div class="border border-black w-4 h-4 ml-3 mr-1"></div>免稅
+                        </div>
+                        <div class="w-[24%] h-full flex items-center justify-end pr-2 font-mono text-xl font-bold">{{ formatNumber(taxAmt) }}</div>
+                    </div>
+
+                    <!-- 3. 總計 (通用，顯示含稅總額) -->
+                    <div class="h-10 border-b border-black flex items-center">
+                        <div class="w-[76%] border-r border-black h-full flex items-center justify-center tracking-[2em] pl-[2em] font-bold">總計</div>
+                        <div class="w-[24%] h-full flex items-center justify-end pr-2 font-mono text-xl font-bold">{{ formatNumber(totalAmt) }}</div>
+                    </div>
+
+                    <!-- 中文大寫 -->
+                    <div class="h-12 flex items-center relative overflow-hidden">
+                        <div class="absolute left-2 top-2 text-xs leading-tight font-bold">總計新臺幣<br>(中文大寫)</div>
+                         <div class="absolute inset-0 flex items-center justify-end pr-12 z-10 pl-24">
+                             <span class="text-2xl font-bold text-black font-print w-full text-right">
+                                 {{ chineseTotal }}
+                             </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右欄：備註 + 專用章 (25%) -->
+                <div class="flex-[1] flex flex-col">
+                    <div class="h-10 border-b border-black flex items-center justify-center font-bold text-lg">備 註</div>
+                    <div class="h-28 border-b border-black p-2 text-sm font-mono text-gray-500">
+                        {{ buyerId ? '此為電子發票證明聯模擬' : '' }}
+                    </div>
+                    <div class="h-10 border-b border-black flex items-center justify-center text-xs">營業人蓋用統一發票專用章</div>
+                    <div class="flex-1 flex items-center justify-center p-4">
+                        <div class="w-28 h-28 border-4 border-dashed border-red-300 rounded-full flex items-center justify-center transform rotate-[-15deg] hover:scale-105 transition duration-300 cursor-pointer">
+                            <div class="text-center">
+                                <div class="text-red-300 text-xs mb-1">發票章</div>
+                                <div class="text-red-400 font-bold text-lg">蓋章處</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex justify-between mt-1 font-print text-sm">
+                <span>※ 應稅、零稅率、免稅之銷售額應分別開立統一發票，並於各該欄打「✓」。</span>
+                <span class="font-bold">第一聯 存根聯</span>
+            </div>
+        </div>
+        
+        <div class="mt-8 text-center no-print pb-10">
+            <button onclick="window.print()" class="bg-gray-800 hover:bg-gray-700 text-white px-8 py-3 rounded shadow-lg transition-colors flex items-center gap-2 mx-auto">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                  <path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1"/>
+                  <path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4zm1 5a2 2 0 0 0-2 2v1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v-1a2 2 0 0 0-2-2zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1"/>
+                </svg>
+                列印 / 存成 PDF
+            </button>
+            <p class="text-gray-400 text-sm mt-4">提示：列印時請記得勾選「列印背景圖形」以保留表格底色</p>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                // 資料狀態
+                const salesAmt = ref(10000); 
+                const taxAmt = ref(500);
+                const totalAmt = ref(10500);
+                
+                const buyerId = ref('');
+                const buyerName = ref('');
+                const isLoading = ref(false);
+                const errorMsg = ref('');
+                const backendStatus = ref(false); // 檢查後端是否活著
+                
+                // 發票類型狀態
+                const invoiceType = ref('triple'); 
+
+                // 日期
+                const now = new Date();
+                const year = now.getFullYear() - 1911;
+                const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                const m = now.getMonth() + 1;
+                const startM = m % 2 !== 0 ? m : m - 1;
+                const month = `${String(startM).padStart(2,'0')}-${String(startM+1).padStart(2,'0')}`;
+
+                // 檢查後端連線狀態
+                const checkBackend = async () => {
+                    try {
+                        const res = await fetch('http://127.0.0.1:8000/');
+                        const data = await res.json();
+                        if (data.message) backendStatus.value = true;
+                    } catch (e) {
+                        backendStatus.value = false;
+                        console.log('後端尚未啟動');
+                    }
+                }
+                
+                onMounted(() => {
+                    checkBackend();
+                });
+
+                // 計算邏輯
+                const calcFromSales = () => {
+                    if (salesAmt.value === '' || salesAmt.value < 0) { 
+                        salesAmt.value = 0; taxAmt.value = 0; totalAmt.value = 0; return; 
+                    }
+                    const s = parseFloat(salesAmt.value);
+                    if (isNaN(s)) return;
+                    taxAmt.value = Math.round(s * 0.05);
+                    totalAmt.value = s + taxAmt.value;
+                };
+
+                const calcFromTotal = () => {
+                    if (totalAmt.value === '' || totalAmt.value < 0) { 
+                        salesAmt.value = 0; taxAmt.value = 0; totalAmt.value = 0; return; 
+                    }
+                    const t = parseFloat(totalAmt.value);
+                    if (isNaN(t)) return;
+                    salesAmt.value = Math.round(t / 1.05);
+                    taxAmt.value = t - salesAmt.value;
+                };
+
+                // --- 核心：真實 API 串接 ---
+                const queryCompany = async () => {
+                    const cleanId = buyerId.value.replace(/\D/g, '');
+                    if (cleanId.length !== 8) {
+                        errorMsg.value = '格式錯誤：請輸入 8 碼數字';
+                        buyerName.value = '';
+                        return;
+                    }
+                    
+                    isLoading.value = true;
+                    errorMsg.value = '';
+                    buyerName.value = ''; // 清空舊資料
+                    
+                    try {
+                        // 呼叫你的 main.py 本機 API
+                        // 注意：main.py 需要正在執行 (uvicorn main:app --reload)
+                        const response = await fetch(`http://127.0.0.1:8000/api/company/${cleanId}`);
+                        
+                        if (!response.ok) {
+                            throw new Error(`API Error: ${response.status}`);
+                        }
+
+                        const data = await response.json();
+                        
+                        if (data.name) {
+                            buyerName.value = data.name;
+                            backendStatus.value = true; // 成功連線
+                        } else {
+                            buyerName.value = '';
+                            errorMsg.value = '查無此統編 (請確認是否正確)';
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        errorMsg.value = '連線失敗：請確認後端伺服器 (main.py) 是否已啟動？';
+                        backendStatus.value = false;
+                    } finally {
+                        isLoading.value = false;
+                    }
+                };
+
+                const formattedBuyerId = computed(() => {
+                    const id = buyerId.value.toString().replace(/\D/g, '');
+                    const arr = new Array(8).fill('');
+                    for(let i=0; i<id.length && i<8; i++) arr[i] = id[i];
+                    return arr;
+                });
+
+                const numberToChinese = (n) => {
+                    if (!/^(0|[1-9]\d*)(\.\d+)?$/.test(n)) return "零元";
+                    let unit = "仟佰拾億仟佰拾萬仟佰拾元角分";
+                    let str = "";
+                    n += "00";
+                    let p = n.indexOf('.');
+                    if (p >= 0) n = n.substring(0, p) + n.substr(p+1, 2);
+                    unit = unit.substr(unit.length - n.length);
+                    for (let i=0; i < n.length; i++)
+                        str += '零壹貳參肆伍陸柒捌玖'.charAt(n.charAt(i)) + unit.charAt(i);
+                    return str.replace(/零(仟|佰|拾|角)/g, "零")
+                            .replace(/(零)+/g, "零")
+                            .replace(/零(萬|億|元)/g, "$1")
+                            .replace(/(億)萬/g, "$1") // 修改處：移除了 |壹(拾) 的取代邏輯，保留「壹拾」
+                            .replace(/^元零?|零分/g, "")
+                            .replace(/元$/g, "元");
+                }
+
+                const chineseTotal = computed(() => {
+                    if (!totalAmt.value && totalAmt.value !== 0) return '';
+                    return numberToChinese(totalAmt.value);
+                });
+                
+                const invoiceTitle = computed(() => {
+                    return invoiceType.value === 'triple' ? '統 一 發 票（三聯式）' : '統 一 發 票（二聯式）';
+                });
+
+                const formatNumber = (val) => {
+                    if (!val && val !== 0) return '';
+                    return Number(val).toLocaleString();
+                }
+
+                return {
+                    salesAmt, taxAmt, totalAmt,
+                    buyerId, buyerName, isLoading, errorMsg, backendStatus,
+                    invoiceType, invoiceTitle,
+                    year, month, currentMonth, day,
+                    calcFromSales, calcFromTotal, queryCompany,
+                    chineseTotal, formattedBuyerId, formatNumber
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
