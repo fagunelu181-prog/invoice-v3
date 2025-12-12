@@ -348,7 +348,7 @@
                 // 檢查後端連線狀態
                 const checkBackend = async () => {
                     try {
-                        const res = await fetch('http://127.0.0.1:8000/');
+                        const res = await fetch('/');
                         const data = await res.json();
                         if (data.message) backendStatus.value = true;
                     } catch (e) {
@@ -398,7 +398,7 @@
                     try {
                         // 呼叫你的 main.py 本機 API
                         // 注意：main.py 需要正在執行 (uvicorn main:app --reload)
-                        const response = await fetch(`api/company/${cleanId}`);
+                        const response = await fetch(`/api/company/${cleanId}`);
                         
                         if (!response.ok) {
                             throw new Error(`API Error: ${response.status}`);
