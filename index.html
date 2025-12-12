@@ -234,7 +234,7 @@
                             <div v-for="n in 5" :key="n" class="flex-1 border-b border-black opacity-50"></div>
                         </div>
                         <div class="relative z-10 flex text-xl h-[44px] items-center font-mono pt-1 font-bold">
-                            <div class="w-[46%] pl-3 truncate">專案開發服務費用</div>
+                            <div class="w-[46%] pl-3 truncate">商品名稱(服務項目)</div>
                             <div class="w-[12%] text-center">1</div>
                             <div class="w-[18%] text-right pr-2">
                                 {{ formatNumber(invoiceType === 'duplicate' ? totalAmt : salesAmt) }}
@@ -398,7 +398,7 @@
                     try {
                         // 呼叫你的 main.py 本機 API
                         // 注意：main.py 需要正在執行 (uvicorn main:app --reload)
-                        const response = await fetch(`http://127.0.0.1:8000/api/company/${cleanId}`);
+                        const response = await fetch(`api/company/${cleanId}`);
                         
                         if (!response.ok) {
                             throw new Error(`API Error: ${response.status}`);
